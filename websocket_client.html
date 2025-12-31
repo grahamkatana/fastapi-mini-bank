@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FastAPI WebSocket Test Client</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        .header h1 {
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+        .content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            padding: 30px;
+        }
+        .panel {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            border: 2px solid #e9ecef;
+        }
+        .panel h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.3em;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #495057;
+        }
+        input, textarea {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #dee2e6;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+        input:focus, textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        button {
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin-right: 10px;
+            margin-top: 10px;
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        button:active {
+            transform: translateY(0);
+        }
+        button.secondary {
+            background: #6c757d;
+        }
+        button.danger {
+            background: #dc3545;
+        }
+        button:disabled {
+            background: #ced4da;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            font-weight: 600;
+        }
+        .status.connected {
+            background: #d4edda;
+            color: #155724;
+            border: 2px solid #c3e6cb;
+        }
+        .status.disconnected {
+            background: #f8d7da;
+            color: #721c24;
+            border: 2px solid #f5c6cb;
+        }
+        .messages {
+            background: white;
+            border: 2px solid #dee2e6;
+            border-radius: 6px;
+            height: 400px;
+            overflow-y: auto;
+            padding: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+        }
+        .message {
+            padding: 10px;
+            margin-bottom: 10px;
+            border-radius: 6px;
+            border-left: 4px solid #667eea;
+            background: #f8f9fa;
+            word-wrap: break-word;
+        }
+        .message.event-login {
+            border-left-color: #28a745;
+        }
+        .message.event-transaction {
+            border-left-color: #17a2b8;
+        }
+        .message.event-account {
+            border-left-color: #ffc107;
+        }
+        .message .time {
+            color: #6c757d;
+            font-size: 11px;
+            margin-bottom: 5px;
+        }
+        .message .type {
+            display: inline-block;
+            padding: 2px 8px;
+            background: #667eea;
+            color: white;
+            border-radius: 3px;
+            font-size: 11px;
+            margin-right: 5px;
+        }
+        .full-width {
+            grid-column: 1 / -1;
+        }
+        pre {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 FastAPI WebSocket Test Client</h1>
+            <p>Real-time connection tester for transactions, logins, and events</p>
+        </div>
+        
+        <div class="content">
+            <!-- Connection Panel -->
+            <div class="panel">
+                <h2>🔌 Connection</h2>
+                <div id="statusBox" class="status disconnected">
+                    ⚫ Disconnected
+                </div>
+                
+                <div class="form-group">
+                    <label>WebSocket URL:</label>
+                    <input type="text" id="wsUrl" value="ws://localhost:8000/api/v1/ws" placeholder="ws://localhost:8000/api/v1/ws">
+                </div>
+                
+                <div class="form-group">
+                    <label>JWT Token:</label>
+                    <input type="text" id="token" placeholder="Paste your JWT token here">
+                    <small style="color: #6c757d;">Get token by logging in via /api/v1/auth/login</small>
+                </div>
+                
+                <button id="connectBtn" onclick="connect()">Connect</button>
+                <button id="disconnectBtn" onclick="disconnect()" disabled class="danger">Disconnect</button>
+                <button onclick="clearMessages()" class="secondary">Clear Messages</button>
+            </div>
+            
+            <!-- Quick Actions Panel -->
+            <div class="panel">
+                <h2>⚡ Quick Actions</h2>
+                
+                <div class="form-group">
+                    <label>API Base URL:</label>
+                    <input type="text" id="apiUrl" value="http://localhost:8000/api/v1">
+                </div>
+                
+                <div class="form-group">
+                    <button onclick="testLogin()">Test Login</button>
+                    <button onclick="testCreateAccount()">Create Account</button>
+                </div>
+                
+                <div class="form-group">
+                    <button onclick="testDeposit()">Test Deposit</button>
+                    <button onclick="testWithdrawal()">Test Withdrawal</button>
+                    <button onclick="testLargeTransaction()">Large Transaction</button>
+                </div>
+                
+                <div class="form-group">
+                    <button onclick="sendPing()" class="secondary">Send Ping</button>
+                    <button onclick="getConnectionStats()" class="secondary">Connection Stats</button>
+                </div>
+            </div>
+            
+            <!-- Messages Panel -->
+            <div class="panel full-width">
+                <h2>📨 Real-time Messages</h2>
+                <div id="messages" class="messages">
+                    <div style="color: #6c757d; text-align: center; padding: 20px;">
+                        Connect to start receiving messages...
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let apiToken = null;
+
+        function connect() {
+            const wsUrl = document.getElementById('wsUrl').value;
+            const token = document.getElementById('token').value;
+            
+            if (!token) {
+                alert('Please enter a JWT token');
+                return;
+            }
+            
+            apiToken = token;
+            const url = `${wsUrl}?token=${token}`;
+            
+            addMessage('info', 'Connecting to WebSocket...', {url});
+            
+            ws = new WebSocket(url);
+            
+            ws.onopen = () => {
+                updateStatus(true);
+                addMessage('success', 'Connected to WebSocket!');
+            };
+            
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                const eventType = data.type || 'unknown';
+                addMessage(eventType, 'Received message', data);
+            };
+            
+            ws.onerror = (error) => {
+                addMessage('error', 'WebSocket error', {error: error.message});
+            };
+            
+            ws.onclose = () => {
+                updateStatus(false);
+                addMessage('info', 'WebSocket connection closed');
+            };
+        }
+        
+        function disconnect() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+        }
+        
+        function updateStatus(connected) {
+            const statusBox = document.getElementById('statusBox');
+            const connectBtn = document.getElementById('connectBtn');
+            const disconnectBtn = document.getElementById('disconnectBtn');
+            
+            if (connected) {
+                statusBox.className = 'status connected';
+                statusBox.innerHTML = '🟢 Connected';
+                connectBtn.disabled = true;
+                disconnectBtn.disabled = false;
+            } else {
+                statusBox.className = 'status disconnected';
+                statusBox.innerHTML = '⚫ Disconnected';
+                connectBtn.disabled = false;
+                disconnectBtn.disabled = true;
+            }
+        }
+        
+        function addMessage(type, message, data = null) {
+            const messagesDiv = document.getElementById('messages');
+            const messageEl = document.createElement('div');
+            messageEl.className = `message event-${type}`;
+            
+            const time = new Date().toLocaleTimeString();
+            let content = `<div class="time">${time}</div>`;
+            content += `<span class="type">${type.toUpperCase()}</span>`;
+            content += `<strong>${message}</strong>`;
+            
+            if (data) {
+                content += `<pre>${JSON.stringify(data, null, 2)}</pre>`;
+            }
+            
+            messageEl.innerHTML = content;
+            messagesDiv.appendChild(messageEl);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+        
+        function clearMessages() {
+            document.getElementById('messages').innerHTML = '';
+        }
+        
+        function sendPing() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send('ping');
+                addMessage('info', 'Sent ping');
+            } else {
+                alert('WebSocket is not connected');
+            }
+        }
+        
+        async function apiRequest(endpoint, method = 'GET', body = null) {
+            const apiUrl = document.getElementById('apiUrl').value;
+            const token = apiToken || document.getElementById('token').value;
+            
+            const options = {
+                method,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                }
+            };
+            
+            if (body) {
+                options.body = JSON.stringify(body);
+            }
+            
+            try {
+                const response = await fetch(`${apiUrl}${endpoint}`, options);
+                const data = await response.json();
+                return { success: response.ok, data };
+            } catch (error) {
+                return { success: false, error: error.message };
+            }
+        }
+        
+        async function testLogin() {
+            const apiUrl = document.getElementById('apiUrl').value;
+            addMessage('info', 'Testing login...');
+            
+            try {
+                const response = await fetch(`${apiUrl}/auth/login`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: 'username=testuser&password=testpass123'
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    addMessage('login', 'Login successful!', data);
+                    document.getElementById('token').value = data.access_token;
+                    apiToken = data.access_token;
+                } else {
+                    addMessage('error', 'Login failed', data);
+                }
+            } catch (error) {
+                addMessage('error', 'Login error', {error: error.message});
+            }
+        }
+        
+        async function testCreateAccount() {
+            const result = await apiRequest('/accounts/', 'POST', {
+                account_type: 'savings',
+                currency: 'USD'
+            });
+            
+            if (result.success) {
+                addMessage('account', 'Account created!', result.data);
+            } else {
+                addMessage('error', 'Failed to create account', result);
+            }
+        }
+        
+        async function testDeposit() {
+            const result = await apiRequest('/transactions/', 'POST', {
+                transaction_type: 'deposit',
+                amount: 1000.00,
+                description: 'Test deposit from WebSocket client'
+            });
+            
+            if (result.success) {
+                addMessage('transaction', 'Deposit successful!', result.data);
+            } else {
+                addMessage('error', 'Deposit failed', result);
+            }
+        }
+        
+        async function testWithdrawal() {
+            const result = await apiRequest('/transactions/', 'POST', {
+                transaction_type: 'withdrawal',
+                amount: 100.00,
+                description: 'Test withdrawal from WebSocket client'
+            });
+            
+            if (result.success) {
+                addMessage('transaction', 'Withdrawal successful!', result.data);
+            } else {
+                addMessage('error', 'Withdrawal failed', result);
+            }
+        }
+        
+        async function testLargeTransaction() {
+            const result = await apiRequest('/transactions/', 'POST', {
+                transaction_type: 'deposit',
+                amount: 15000.00,
+                description: 'Large transaction to trigger Celery task'
+            });
+            
+            if (result.success) {
+                addMessage('transaction', 'Large transaction created! Watch for processing notification.', result.data);
+            } else {
+                addMessage('error', 'Transaction failed', result);
+            }
+        }
+        
+        async function getConnectionStats() {
+            const result = await apiRequest('/ws/connections', 'GET');
+            
+            if (result.success) {
+                addMessage('info', 'Connection statistics', result.data);
+            } else {
+                addMessage('error', 'Failed to get stats', result);
+            }
+        }
+    </script>
+</body>
+</html>
