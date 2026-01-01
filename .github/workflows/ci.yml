@@ -52,24 +52,20 @@ jobs:
           cache: 'pip'
 
       - name: Install UV
-        run: |
-          pip install uv
+        run: pip install uv
 
       - name: Install dependencies
         run: |
           uv venv
-          source .venv/bin/activate
           uv pip install -r requirements.txt
 
       - name: Run Ruff Format Check
         run: |
-          source .venv/bin/activate
-          ruff format --check .
+          .venv/bin/ruff format --check .
 
       - name: Run Ruff Linter
         run: |
-          source .venv/bin/activate
-          ruff check app/
+          .venv/bin/ruff check app/
 
       - name: Run Tests with Coverage
         env:
@@ -78,8 +74,7 @@ jobs:
           CELERY_BROKER_URL: redis://localhost:6379/0
           CELERY_RESULT_BACKEND: redis://localhost:6379/0
         run: |
-          source .venv/bin/activate
-          pytest tests/ -v \
+          .venv/bin/pytest tests/ -v \
             --cov=app \
             --cov-report=term-missing \
             --cov-report=xml \
@@ -97,8 +92,7 @@ jobs:
 
       - name: Check Coverage Threshold
         run: |
-          source .venv/bin/activate
-          coverage report --fail-under=70
+          .venv/bin/coverage report --fail-under=70
 
   security:
     name: Security Scans
@@ -131,14 +125,13 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: security-reports
-          path: |
-            bandit-report.json
+          path: bandit-report.json
         if: always()
 
   build-and-push:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
-    needs: [test, security]  # ← Only runs if tests pass!
+    needs: [test, security]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     
     outputs:
@@ -240,10 +233,7 @@ jobs:
           echo "Running smoke tests..."
           sleep 10
           
-          # Test health endpoint
           curl -f https://test.tekbridge.co.za/ || exit 1
-          
-          # Test API docs
           curl -f https://test.tekbridge.co.za/docs || exit 1
           
           echo "✅ Smoke tests passed!"
