@@ -1,0 +1,231 @@
+pipeline {
+    agent any
+    
+    environment {
+        DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
+        DOCKERHUB_USERNAME = credentials('dockerhub-username')
+        GIT_REPO = 'https://github.com/grahamkatana/fastapi-mini-bank.git'
+        GIT_BRANCH = 'main'
+        IMAGE_NAME = "${DOCKERHUB_USERNAME}/fastapi-mini-bank"
+        DATABASE_URL = 'mysql+pymysql://root:test_password@mysql:3306/test_db'
+        SECRET_KEY = 'test-secret-key-jenkins'
+        CELERY_BROKER_URL = 'redis://redis:6379/0'
+        CELERY_RESULT_BACKEND = 'redis://redis:6379/0'
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                git branch: "${GIT_BRANCH}", url: "${GIT_REPO}"
+                script {
+                    env.GIT_COMMIT_SHORT = sh(
+                        script: "git rev-parse --short HEAD",
+                        returnStdout: true
+                    ).trim()
+                    env.IMAGE_TAG = "${GIT_BRANCH}-${GIT_COMMIT_SHORT}"
+                }
+            }
+        }
+        
+        stage('Code Quality') {
+            parallel {
+                stage('Ruff Format') {
+                    steps {
+                        script {
+                            docker.image('python:3.13-slim').inside('-u root') {
+                                sh '''
+                                    pip install ruff
+                                    ruff format --check . || true
+                                '''
+                            }
+                        }
+                    }
+                }
+                stage('Ruff Lint') {
+                    steps {
+                        script {
+                            docker.image('python:3.13-slim').inside('-u root') {
+                                sh '''
+                                    pip install ruff
+                                    ruff check app || true
+                                '''
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Run Tests') {
+            steps {
+                script {
+                    docker.image('python:3.13-slim').inside('--network tests_default -u root') {
+                        sh '''
+                            apt-get update && apt-get install -y gcc default-libmysqlclient-dev pkg-config
+                            pip install uv
+                            uv venv
+                            . .venv/bin/activate
+                            uv pip install -r requirements.txt
+                            
+                            # Wait for MySQL to be ready
+                            sleep 10
+                            
+                            # Run tests
+                            pytest tests/ -v \
+                                --cov=app \
+                                --cov-report=term-missing \
+                                --cov-report=xml \
+                                --cov-report=html \
+                                --junitxml=test-results.xml
+                            
+                            # Check coverage threshold
+                            coverage report --fail-under=70
+                        '''
+                    }
+                }
+            }
+            post {
+                always {
+                    junit allowEmptyResults: true, testResults: 'test-results.xml'
+                    publishHTML([
+                        allowMissing: true,
+                        alwaysLinkToLastBuild: true,
+                        keepAll: true,
+                        reportDir: 'htmlcov',
+                        reportFiles: 'index.html',
+                        reportName: 'Coverage Report'
+                    ])
+                }
+            }
+        }
+        
+        stage('Security Scans') {
+            parallel {
+                stage('Bandit') {
+                    steps {
+                        script {
+                            docker.image('python:3.13-slim').inside('-u root') {
+                                sh '''
+                                    pip install bandit
+                                    bandit -r app -f json -o bandit-report.json || true
+                                '''
+                            }
+                        }
+                    }
+                }
+                stage('Safety') {
+                    steps {
+                        script {
+                            docker.image('python:3.13-slim').inside('-u root') {
+                                sh '''
+                                    pip install safety
+                                    safety check --json || true
+                                '''
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    sh """
+                        docker build \
+                            --build-arg BUILD_NUMBER=${BUILD_NUMBER} \
+                            --build-arg COMMIT_SHA=${GIT_COMMIT_SHORT} \
+                            -t ${IMAGE_NAME}:${IMAGE_TAG} \
+                            -t ${IMAGE_NAME}:latest \
+                            -t ${IMAGE_NAME}:build-${BUILD_NUMBER} .
+                    """
+                }
+            }
+        }
+        
+        stage('Push to Docker Hub') {
+            steps {
+                script {
+                    sh """
+                        docker login -u ${DOCKERHUB_USERNAME} -p ${DOCKERHUB_CREDENTIALS_PSW}
+                        docker push ${IMAGE_NAME}:${IMAGE_TAG}
+                        docker push ${IMAGE_NAME}:latest
+                        docker push ${IMAGE_NAME}:build-${BUILD_NUMBER}
+                        docker logout
+                    """
+                }
+            }
+        }
+        
+        stage('Deploy to Kubernetes') {
+            steps {
+                script {
+                    docker.image('bitnami/kubectl:latest').inside("--entrypoint=''") {
+                        withCredentials([
+                            string(credentialsId: 'kubeconfig', variable: 'KUBECONFIG_CONTENT')
+                        ]) {
+                            sh '''
+                                mkdir -p ~/.kube
+                                echo "$KUBECONFIG_CONTENT" > ~/.kube/config
+                                chmod 600 ~/.kube/config
+                                
+                                # Verify connection
+                                kubectl cluster-info
+                                kubectl get nodes
+                                
+                                # Update deployment
+                                kubectl set image deployment/fastapi-app \
+                                    fastapi=${IMAGE_NAME}:${IMAGE_TAG} \
+                                    -n fastapi
+                                
+                                # Wait for rollout
+                                kubectl rollout status deployment/fastapi-app -n fastapi --timeout=5m
+                                
+                                # Verify deployment
+                                kubectl get pods -n fastapi
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Smoke Tests') {
+            steps {
+                sh '''
+                    echo "Running smoke tests..."
+                    sleep 10
+                    
+                    # Test health endpoint
+                    curl -f https://test.tekbridge.co.za/ || exit 1
+                    
+                    # Test API docs
+                    curl -f https://test.tekbridge.co.za/docs || exit 1
+                    
+                    echo "✅ Smoke tests passed!"
+                '''
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo "✅ Pipeline completed successfully!"
+            echo "======================================"
+            echo "Build: #${BUILD_NUMBER}"
+            echo "Commit: ${GIT_COMMIT_SHORT}"
+            echo "Image: ${IMAGE_NAME}:${IMAGE_TAG}"
+            echo "Tests: PASSED ✅"
+            echo "Coverage: >70% ✅"
+            echo "Security: SCANNED ✅"
+            echo "Deployed: https://test.tekbridge.co.za ✅"
+        }
+        failure {
+            echo '❌ Pipeline failed!'
+            echo 'Check logs above for details'
+        }
+        always {
+            sh 'docker system prune -f || true'
+        }
+    }
+}
