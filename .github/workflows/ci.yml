@@ -1,211 +1,116 @@
-name: CI/CD Pipeline
+name: Build and Deploy to K8s
 
 on:
   push:
-    branches: [ main, develop ]
+    branches:
+      - main
   pull_request:
-    branches: [ main, develop ]
+    branches:
+      - main
+
+env:
+  REGISTRY: docker.io
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/fastapi-mini-bank
 
 jobs:
-  test:
-    name: Run Tests
+  build-and-push:
+    name: Build and Push Docker Image
     runs-on: ubuntu-latest
     
-    services:
-      mysql:
-        image: mysql:8.0
-        env:
-          MYSQL_ROOT_PASSWORD: test_password
-          MYSQL_DATABASE: test_db
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=3
-      
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd="redis-cli ping"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=3
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.13'
-
-    - name: Install UV
-      run: pip install uv
-
-    - name: Cache UV dependencies
-      uses: actions/cache@v3
-      with:
-        path: ~/.cache/uv
-        key: ${{ runner.os }}-uv-${{ hashFiles('**/requirements.txt', '**/pyproject.toml') }}
-        restore-keys: |
-          ${{ runner.os }}-uv-
-
-    - name: Install dependencies
-      run: |
-        uv venv
-        source .venv/bin/activate
-        uv pip install -r requirements.txt
-        uv pip install ruff
-
-    - name: Run formatting check (ruff)
-      run: |
-        source .venv/bin/activate
-        uv run ruff format --check .
-      continue-on-error: true
-
-    - name: Run linting (ruff)
-      run: |
-        source .venv/bin/activate
-        uv run ruff check app
-      continue-on-error: true
-
-    - name: Run tests with pytest
-      env:
-        DATABASE_URL: mysql+pymysql://root:test_password@localhost:3306/test_db
-        SECRET_KEY: test-secret-key-for-ci
-        CELERY_BROKER_URL: redis://localhost:6379/0
-        CELERY_RESULT_BACKEND: redis://localhost:6379/0
-      run: |
-        source .venv/bin/activate
-        uv run pytest tests/ -v --cov=app --cov-report=term-missing --cov-report=xml
-
-    - name: Upload coverage reports
-      uses: codecov/codecov-action@v3
-      with:
-        file: ./coverage.xml
-        fail_ci_if_error: false
-      continue-on-error: true
-
-    - name: Test API endpoints
-      env:
-        DATABASE_URL: mysql+pymysql://root:test_password@localhost:3306/test_db
-        SECRET_KEY: test-secret-key-for-ci
-        CELERY_BROKER_URL: redis://localhost:6379/0
-        CELERY_RESULT_BACKEND: redis://localhost:6379/0
-      run: |
-        source .venv/bin/activate
-        # Start the application in background
-        uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 &
-        sleep 5
-        
-        # Test health endpoint
-        curl -f http://localhost:8000/health || exit 1
-        
-        # Test API docs are accessible
-        curl -f http://localhost:8000/docs || exit 1
-        
-        echo "API endpoints are accessible!"
-
-  security-scan:
-    name: Security Scan
-    runs-on: ubuntu-latest
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
     
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.12'
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-    - name: Install UV
-      run: pip install uv
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-    - name: Install dependencies
-      run: |
-        uv venv
-        source .venv/bin/activate
-        uv pip install bandit safety
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=build-${{ github.run_number }}
 
-    - name: Run Bandit security scan
-      run: |
-        source .venv/bin/activate
-        uv run bandit -r app -f json -o bandit-report.json
-      continue-on-error: true
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILD_NUMBER=${{ github.run_number }}
+            COMMIT_SHA=${{ github.sha }}
 
-    - name: Check for known security vulnerabilities
-      run: |
-        source .venv/bin/activate
-        uv pip install -r requirements.txt
-        uv run safety check --json
-      continue-on-error: true
-
-  build-docker:
-    name: Build & Push Docker Image
+  deploy-to-k8s:
+    name: Deploy to Kubernetes
     runs-on: ubuntu-latest
-    needs: test
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main'
     
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
 
-    - name: Login to Docker Hub
-      uses: docker/login-action@v3
-      with:
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Configure kubectl
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
 
-    - name: Extract metadata
-      id: meta
-      uses: docker/metadata-action@v5
-      with:
-        images: ${{ secrets.DOCKERHUB_USERNAME }}/fastapi-mini-bank
-        tags: |
-          type=ref,event=branch
-          type=ref,event=pr
-          type=semver,pattern={{version}}
-          type=semver,pattern={{major}}.{{minor}}
-          type=sha,prefix={{branch}}-
-          type=raw,value=latest,enable={{is_default_branch}}
-          type=raw,value=build-${{ github.run_number }}
+      - name: Verify cluster connection
+        run: |
+          kubectl cluster-info
+          kubectl get nodes
 
-    - name: Build and push
-      uses: docker/build-push-action@v5
-      with:
-        context: .
-        push: true
-        tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
-        build-args: |
-          BUILD_NUMBER=${{ github.run_number }}
-          COMMIT_SHA=${{ github.sha }}
+      - name: Update deployment with new image
+        run: |
+          # Get the short SHA for the image tag
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          IMAGE_TAG="main-${SHORT_SHA}"
+          
+          # Update the image in the deployment
+          kubectl set image deployment/fastapi-app \
+            fastapi=${{ env.IMAGE_NAME }}:${IMAGE_TAG} \
+            -n fastapi
+          
+          # Wait for rollout to complete
+          kubectl rollout status deployment/fastapi-app -n fastapi --timeout=5m
 
-    - name: Image digest
-      run: echo ${{ steps.meta.outputs.digest }}
-  notify:
-    name: Notify Results
-    runs-on: ubuntu-latest
-    needs: [test, security-scan]
-    if: always()
-    
-    steps:
-    - name: Check test results
-      run: |
-        if [ "${{ needs.test.result }}" == "success" ]; then
-          echo "✅ All tests passed!"
-        else
-          echo "❌ Tests failed!"
-          exit 1
-        fi
+      - name: Verify deployment
+        run: |
+          kubectl get pods -n fastapi
+          kubectl get svc -n fastapi
+          kubectl get ingress -n fastapi
+
+      - name: Deployment Summary
+        run: |
+          echo "🚀 Deployment Summary"
+          echo "===================="
+          echo "Image: ${{ env.IMAGE_NAME }}:main-$(echo ${{ github.sha }} | cut -c1-7)"
+          echo "Build: #${{ github.run_number }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "URL: https://test.tekbridge.co.za"

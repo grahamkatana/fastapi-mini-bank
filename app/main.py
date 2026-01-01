@@ -10,7 +10,7 @@ Base.metadata.create_all(bind=engine)
 # Initialize FastAPI app
 app = FastAPI(
     title=settings.APP_NAME,
-    description="FastAPI project with JWT Auth, MySQL, and Celery",
+    description="FastAPI project with JWT Auth, MySQL, and Celery with Redis, Dockerized and kubernetes-ready.",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc"
