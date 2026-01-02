@@ -1,4 +1,6 @@
 from fastapi import FastAPI
+from app.core.logging_config import setup_logging, logger
+from app.middleware.logging_middleware import LoggingMiddleware
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import engine, Base
@@ -6,6 +8,7 @@ from app.api import api_router
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
+setup_logging(log_level="INFO")
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -13,7 +16,6 @@ app = FastAPI(
     description="FastAPI project with JWT Auth, MySQL, and Celery with Redis, Dockerized and kubernetes-ready.",
     version="1.0.0",
     docs_url="/docs",
-    redoc_url="/redoc"
 )
 
 # Configure CORS
@@ -24,19 +26,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(LoggingMiddleware)
+
+logger.info("Application starting up")
+
 
 # Include API router
 app.include_router(api_router, prefix="/api/v1")
 
 
 @app.get("/")
-def root():
-    """Root endpoint"""
-    return {
-        "message": "Welcome to FastAPI Project",
-        "docs": "/docs",
-        "redoc": "/redoc"
-    }
+async def root():
+    logger.info("Health check endpoint called")
+    return {"status": "healthy", "service": "fastapi-mini-bank"}
+
 
 
 @app.get("/health")
