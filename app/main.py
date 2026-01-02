@@ -1,6 +1,9 @@
 from fastapi import FastAPI
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+from fastapi.responses import Response
 from app.core.logging_config import setup_logging, logger
 from app.middleware.logging_middleware import LoggingMiddleware
+from app.middleware.metrics_middleware import MetricsMiddleware
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import engine, Base
@@ -27,6 +30,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(LoggingMiddleware)
+app.add_middleware(MetricsMiddleware)
 
 logger.info("Application starting up")
 
@@ -40,6 +44,13 @@ async def root():
     logger.info("Health check endpoint called")
     return {"status": "healthy", "service": "fastapi-mini-bank"}
 
+@app.get("/metrics")
+async def metrics():
+    """Prometheus metrics endpoint."""
+    return Response(
+        content=generate_latest(),
+        media_type=CONTENT_TYPE_LATEST
+    )
 
 
 @app.get("/health")
