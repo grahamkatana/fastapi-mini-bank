@@ -70,9 +70,12 @@ kind: Service
 metadata:
   name: fastapi-service
   namespace: fastapi
+  labels:
+    app: fastapi-app
 spec:
   selector:
     app: fastapi-app
   ports:
-  - port: 80
+  - name: http
+    port: 80
     targetPort: 8000
