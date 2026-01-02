@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, HTTPException
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from fastapi.responses import Response
 from app.core.logging_config import setup_logging, logger
@@ -37,6 +37,19 @@ logger.info("Application starting up")
 
 # Include API router
 app.include_router(api_router, prefix="/api/v1")
+
+@app.middleware("http")
+async def block_public_metrics(request: Request, call_next):
+    """Block /metrics from public access."""
+    if request.url.path == "/metrics":
+        # Only allow from internal network
+        client_host = request.client.host if request.client else ""
+        
+        # Allow from cluster internal IPs (10.x.x.x)
+        if not client_host.startswith("10."):
+            raise HTTPException(status_code=403, detail="Forbidden")
+    
+    return await call_next(request)
 
 
 @app.get("/")
